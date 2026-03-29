@@ -67,16 +67,25 @@ $allDevices = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue
 $deviceMap = @{}
 foreach ($d in $allDevices) { $deviceMap[$d.InstanceId] = $d }
 
-# Filter to PCI devices with a CurrentLinkWidth
-$pciDevices = $allDevices | Where-Object { $_.InstanceId -like "PCI*" }
+# Pre-filter to GPU and NVMe devices only — avoids querying every PCI bridge/controller.
+# This is the biggest performance win: Get-PnpDeviceProperty is slow (COM round-trip)
+# and previously ran 4-8 times for every PCI device in the system (could be 50+).
+$relevantDevices = $allDevices | Where-Object {
+    $_.InstanceId -like "PCI*" -and (
+        $_.Class -eq "Display" -or
+        $_.Class -eq "SCSIAdapter" -or
+        $_.FriendlyName -like "*NVMe*" -or
+        $_.FriendlyName -like "*NVM*"
+    )
+}
 
-$results = foreach ($dev in $pciDevices) {
+$results = foreach ($dev in $relevantDevices) {
     $currentWidth = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_CurrentLinkWidth"
     if ($null -eq $currentWidth -or $currentWidth -eq 0) { continue }
 
-    $maxWidth    = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_MaxLinkWidth"
+    $maxWidth     = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_MaxLinkWidth"
     $currentSpeed = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_CurrentLinkSpeed"
-    $maxSpeed    = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_MaxLinkSpeed"
+    $maxSpeed     = Get-PciProperty $dev.InstanceId "DEVPKEY_PciDevice_MaxLinkSpeed"
 
     # Determine category
     $category = "Other"

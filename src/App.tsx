@@ -449,7 +449,7 @@ function WelcomeScreen({ onScan, lastScan }: { onScan: ()=>void; lastScan: strin
       <div className="welcome-tips">
         <div className="welcome-tip"><CheckCircle size={14} color="var(--accent-green)" style={{flexShrink:0,marginTop:'0.1rem'}}/><span><strong>Open GPU-Z first</strong> for hardware-verified GPU lane readings</span></div>
         <div className="welcome-tip"><Zap size={14} color="var(--accent-blue)" style={{flexShrink:0,marginTop:'0.1rem'}}/><span><strong>Run a GPU load</strong> (game or benchmark) — idle GPUs drop to x4 to save power</span></div>
-        <div className="welcome-tip"><Info size={14} color="var(--accent-yellow)" style={{flexShrink:0,marginTop:'0.1rem'}}/><span>Results take ~5 seconds — the app reads PnP devices, GPU-Z shared memory, and nvidia-smi</span></div>
+        <div className="welcome-tip"><Info size={14} color="var(--accent-yellow)" style={{flexShrink:0,marginTop:'0.1rem'}}/><span>Scan takes <strong>20–90 seconds</strong> — Windows PnP enumeration is slow. One-time wait per session.</span></div>
       </div>
       {lastScan && <div className="cached-banner"><Clock size={12}/> Last scan: {lastScan}</div>}
       <button className="scan-btn" onClick={onScan}><RefreshCcw size={18}/> Start Scan</button>
