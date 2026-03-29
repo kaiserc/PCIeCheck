@@ -64,10 +64,11 @@ function saveSnapshot(devices: DisplayDevice[]) {
 const SPEED_LABELS: Record<number, string> = { 1:'Gen 1 (2.5 GT/s)', 2:'Gen 2 (5 GT/s)', 3:'Gen 3 (8 GT/s)', 4:'Gen 4 (16 GT/s)', 5:'Gen 5 (32 GT/s)' };
 const speedLabel = (n: number) => SPEED_LABELS[n] ?? `Gen ${n}`;
 
-// ── Generic Slot Layout ────────────────────────────────────────────────────
+// ── Generic Slot Layouts per platform ─────────────────────────────────────
 type SlotKind = 'pcie-x16' | 'pcie-x4' | 'pcie-x1' | 'm2';
 interface SlotDef { id: string; label: string; kind: SlotKind; laneSource: 'CPU'|'Chipset'; maxGen: number; maxWidth: number; sharesNote?: string; }
 
+// AMD AM5 — X870E / X870 / X670E / X670 / B650E / B650
 const AMD_AM5: SlotDef[] = [
   { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:5, maxWidth:16 },
   { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:5, maxWidth:4  },
@@ -78,7 +79,38 @@ const AMD_AM5: SlotDef[] = [
   { id:'m5', label:'M.2_5',     kind:'m2',        laneSource:'Chipset', maxGen:4, maxWidth:4  },
   { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
 ];
-const INTEL_Z790: SlotDef[] = [
+
+// AMD AM4 — X570 (chipset supports Gen 4)
+const AMD_AM4_X570: SlotDef[] = [
+  { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:4, maxWidth:16 },
+  { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:4, maxWidth:4  },
+  { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'Chipset', maxGen:4, maxWidth:4  },
+  { id:'m2', label:'M.2_2',     kind:'m2',        laneSource:'Chipset', maxGen:4, maxWidth:4  },
+  { id:'m3', label:'M.2_3',     kind:'m2',        laneSource:'Chipset', maxGen:4, maxWidth:4  },
+  { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+  { id:'p2', label:'PCIEX1_2',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+];
+
+// AMD AM4 — B550 (chipset is Gen 3 only)
+const AMD_AM4_B550: SlotDef[] = [
+  { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:4, maxWidth:16 },
+  { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:4, maxWidth:4  },
+  { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'m2', label:'M.2_2',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+];
+
+// AMD AM4 — B450 / X470 (Gen 2 chipset, Gen 3 CPU slot)
+const AMD_AM4_B450: SlotDef[] = [
+  { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:3, maxWidth:16 },
+  { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:3, maxWidth:4, sharesNote:'May share lanes with PCIEX16_1 on some boards' },
+  { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'Chipset', maxGen:2, maxWidth:4  },
+  { id:'m2', label:'M.2_2',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:2, maxWidth:1  },
+];
+
+// Intel LGA1700 — Z790 / Z690 / B760 / H770 (12th/13th/14th gen)
+const INTEL_LGA1700: SlotDef[] = [
   { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:5, maxWidth:16 },
   { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:5, maxWidth:4  },
   { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'CPU',     maxGen:4, maxWidth:4  },
@@ -88,6 +120,62 @@ const INTEL_Z790: SlotDef[] = [
   { id:'m4', label:'M.2_4',     kind:'m2',        laneSource:'Chipset', maxGen:4, maxWidth:4  },
   { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
 ];
+
+// Intel LGA1200 — Z590 / Z490 / B560 / H570 (10th/11th gen)
+const INTEL_LGA1200: SlotDef[] = [
+  { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:4, maxWidth:16 },  // 11th=Gen4, 10th=Gen3
+  { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:4, maxWidth:4  },
+  { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'m2', label:'M.2_2',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'m3', label:'M.2_3',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+  { id:'p2', label:'PCIEX1_2',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+];
+
+// Intel LGA1151 — Z390 / Z370 / B365 / H370 (8th/9th gen)
+const INTEL_LGA1151: SlotDef[] = [
+  { id:'s1', label:'PCIEX16_1', kind:'pcie-x16', laneSource:'CPU',     maxGen:3, maxWidth:16 },
+  { id:'m1', label:'M.2_1',     kind:'m2',        laneSource:'CPU',     maxGen:3, maxWidth:4, sharesNote:'May share bandwidth with PCIEX16_1 on some boards' },
+  { id:'s2', label:'PCIEX16_2', kind:'pcie-x4',   laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'m2', label:'M.2_2',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'m3', label:'M.2_3',     kind:'m2',        laneSource:'Chipset', maxGen:3, maxWidth:4  },
+  { id:'p1', label:'PCIEX1_1',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+  { id:'p2', label:'PCIEX1_2',  kind:'pcie-x1',   laneSource:'Chipset', maxGen:3, maxWidth:1  },
+];
+
+interface LayoutResult { layout: SlotDef[]; platformName: string; }
+
+function detectLayout(cpu: string, moboModel: string): LayoutResult {
+  const c = cpu.toLowerCase();
+  const m = moboModel.toLowerCase();
+
+  // ── AMD AM5 ──────────────────────────────────────────────────────
+  if (/x870|b850|x670|b650/.test(m))                                            return { layout: AMD_AM5,        platformName: 'AMD AM5 (X870/X670/B650)' };
+  if (c.includes('ryzen') && /\b9[0-9]{3}x?3?d?\b/.test(c))                   return { layout: AMD_AM5,        platformName: 'AMD AM5' };
+
+  // ── AMD AM4 by chipset ──────────────────────────────────────────
+  if (/x570/.test(m))                                                            return { layout: AMD_AM4_X570,   platformName: 'AMD AM4 (X570)' };
+  if (/b550/.test(m))                                                            return { layout: AMD_AM4_B550,   platformName: 'AMD AM4 (B550)' };
+  if (/x470|b450|a520|b550m/.test(m))                                           return { layout: AMD_AM4_B450,   platformName: 'AMD AM4 (B450/X470)' };
+  // AM4 by CPU generation
+  if (c.includes('ryzen') && /\b[135][0-9]{3}x?\b/.test(c))                   return { layout: AMD_AM4_B550,   platformName: 'AMD AM4' };
+
+  // ── Intel LGA1700 ────────────────────────────────────────────────
+  if (/z790|z690|b760|h770/.test(m))                                             return { layout: INTEL_LGA1700,  platformName: 'Intel LGA1700 (Z790/Z690)' };
+  if (/core.?i[3579].?1[234][0-9]{3}/.test(c))                                  return { layout: INTEL_LGA1700,  platformName: 'Intel LGA1700' };
+
+  // ── Intel LGA1200 ────────────────────────────────────────────────
+  if (/z590|z490|b560|h570/.test(m))                                             return { layout: INTEL_LGA1200,  platformName: 'Intel LGA1200 (Z590/Z490)' };
+  if (/core.?i[3579].?1[01][0-9]{3}/.test(c))                                   return { layout: INTEL_LGA1200,  platformName: 'Intel LGA1200' };
+
+  // ── Intel LGA1151 ────────────────────────────────────────────────
+  if (/z390|z370|b365|h370|z270|z170/.test(m))                                  return { layout: INTEL_LGA1151,  platformName: 'Intel LGA1151 (Z390/Z370)' };
+  if (/core.?i[3579].?[89][0-9]{3}/.test(c))                                    return { layout: INTEL_LGA1151,  platformName: 'Intel LGA1151' };
+
+  // ── Fallback ──────────────────────────────────────────────────────
+  return { layout: AMD_AM5, platformName: 'Unknown (showing AMD AM5 generic)' };
+}
+
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 function WidthBar({ current, max, throttled }: { current: number; max: number; throttled: boolean }) {
@@ -187,16 +275,15 @@ function MotherboardPanel({ info }: { info: SystemInfo }) {
   );
 }
 
-function SlotDiagram({ devices, cpu }: { devices: DisplayDevice[]; cpu: string }) {
-  const isIntel = cpu.toLowerCase().includes('intel') || cpu.toLowerCase().includes('core i');
-  const layout  = isIntel ? INTEL_Z790 : AMD_AM5;
-  const gpus    = devices.filter(d => d.category==='GPU');
-  const nvmes   = devices.filter(d => d.category==='NVMe');
+function SlotDiagram({ devices, cpu, moboModel }: { devices: DisplayDevice[]; cpu: string; moboModel: string }) {
+  const { layout, platformName } = detectLayout(cpu, moboModel);
+  const gpus  = devices.filter(d => d.category==='GPU');
+  const nvmes = devices.filter(d => d.category==='NVMe');
   let gi=0, ni=0;
 
   return (
     <div className="slot-diagram">
-      <div className="slot-diagram-header"><LayoutGrid size={14}/> Motherboard Slot Map <span style={{fontWeight:400,opacity:0.6,textTransform:'none',letterSpacing:0}}>— {isIntel?'Intel LGA1700':'AMD AM5'} generic layout</span></div>
+      <div className="slot-diagram-header"><LayoutGrid size={14}/> Motherboard Slot Map <span style={{fontWeight:400,opacity:0.6,textTransform:'none',letterSpacing:0}}>— {platformName} generic layout</span></div>
       <div className="slot-list">
         {layout.map(slot => {
           let device: DisplayDevice|null = null;
@@ -493,7 +580,7 @@ function App() {
             </div>
           )}
           <BenchmarkPrompt onRefresh={fetchData}/>
-          {systemInfo && pciDevices.length>0 && <SlotDiagram devices={pciDevices} cpu={systemInfo.CPU}/>}
+          {systemInfo && pciDevices.length>0 && <SlotDiagram devices={pciDevices} cpu={systemInfo.CPU} moboModel={systemInfo.Motherboard.Model}/>}
           <div className="grid">{pciDevices.map(d=><DeviceCard key={d.instanceId} device={d}/>)}</div>
           <HistoryPanel history={history} onClear={()=>{ localStorage.removeItem(HISTORY_KEY); setHistory([]); }}/>
           <footer style={{marginTop:'2rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'0.75rem'}}>
