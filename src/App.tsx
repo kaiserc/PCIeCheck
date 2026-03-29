@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Cpu, HardDrive, RefreshCcw, AlertTriangle, Zap, CheckCircle,
   Info, ShieldCheck, BookOpen, ExternalLink, Search, Layers,
-  History, ChevronDown, ChevronUp, Clock, Trash2
+  History, ChevronDown, ChevronUp, Clock, Trash2, Flame
 } from 'lucide-react';
 import './index.css';
 
@@ -256,6 +256,93 @@ function GpuZNotice({ onDismiss }: { onDismiss: () => void }) {
   );
 }
 
+interface BenchmarkResult {
+  Launched: boolean; AlreadyRunning?: boolean; Tool?: string;
+  Message: string; DownloadUrls?: { FurMark: string; HeavyLoad: string; };
+}
+
+function BenchmarkPrompt({ onRefresh }: { onRefresh: () => void }) {
+  const [status, setStatus]       = useState<'idle' | 'launching' | 'running' | 'countdown' | 'notfound'>('idle');
+  const [toolName, setToolName]   = useState<string>('');
+  const [countdown, setCountdown] = useState(15);
+  const [dlUrls, setDlUrls]       = useState<{ FurMark: string; HeavyLoad: string } | null>(null);
+
+  const launch = async () => {
+    setStatus('launching');
+    try {
+      const res = await fetch('http://localhost:3001/api/launch-benchmark', { method: 'POST' });
+      const data: BenchmarkResult = await res.json();
+
+      if (data.AlreadyRunning) {
+        setToolName(data.Tool ?? 'Benchmark');
+        setStatus('countdown');
+        startCountdown();
+        return;
+      }
+      if (data.Launched) {
+        setToolName(data.Tool ?? 'Benchmark');
+        setStatus('countdown');
+        startCountdown();
+        return;
+      }
+      // Not found
+      setDlUrls(data.DownloadUrls ?? null);
+      setStatus('notfound');
+    } catch {
+      setStatus('notfound');
+    }
+  };
+
+  const startCountdown = () => {
+    let n = 15;
+    setCountdown(n);
+    const t = setInterval(() => {
+      n--;
+      setCountdown(n);
+      if (n <= 0) {
+        clearInterval(t);
+        setStatus('idle');
+        onRefresh();
+      }
+    }, 1000);
+  };
+
+  if (status === 'countdown') {
+    return (
+      <div className="benchmark-bar running">
+        <Flame size={16} className="flame-icon" />
+        <span><strong>{toolName} running</strong> — auto-refreshing in <strong>{countdown}s</strong> to capture GPU at full load</span>
+        <button className="bench-skip" onClick={() => { setStatus('idle'); onRefresh(); }}>Scan now</button>
+      </div>
+    );
+  }
+
+  if (status === 'notfound') {
+    return (
+      <div className="benchmark-bar notfound">
+        <Info size={15} style={{ flexShrink: 0 }} />
+        <span>No benchmark tool found.{' '}
+          {dlUrls && <>
+            Download <button className="bench-dl" onClick={() => openUrl(dlUrls.FurMark)}>FurMark</button>
+            {' '}or <button className="bench-dl" onClick={() => openUrl(dlUrls.HeavyLoad)}>HeavyLoad</button>
+          </>}
+        </span>
+        <button className="bench-skip" onClick={() => setStatus('idle')}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="benchmark-bar">
+      <Flame size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+      <span style={{ flex: 1 }}>GPUs drop to x1–x4 at idle. Stress the GPU first for accurate PCIe width readings.</span>
+      <button className="bench-launch" onClick={launch} disabled={status === 'launching'}>
+        {status === 'launching' ? 'Launching…' : '🎮 Run Benchmark'}
+      </button>
+    </div>
+  );
+}
+
 function HistoryPanel({ history, onClear }: { history: HistorySnapshot[]; onClear: () => void }) {
   const [open, setOpen] = useState(false);
   if (history.length === 0) return null;
@@ -317,10 +404,10 @@ function App() {
   const [pciDevices, setPciDevices] = useState<DisplayDevice[]>([]);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [gpuVerified, setGpuVerified] = useState<'gpuz' | 'nvidia' | null>(null);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
+  const [loading, setLoading]               = useState(true);
+  const [error, setError]                   = useState<string | null>(null);
   const [showGpuZNotice, setShowGpuZNotice] = useState(false);
-  const [history, setHistory]         = useState<HistorySnapshot[]>(() => loadHistory());
+  const [history, setHistory]               = useState<HistorySnapshot[]>(() => loadHistory());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -488,10 +575,7 @@ function App() {
 
       {showGpuZNotice && !loading && <GpuZNotice onDismiss={() => setShowGpuZNotice(false)} />}
 
-      <div className="idle-notice">
-        <Info size={13} />
-        <span>GPUs drop to x1–x4 at idle to save power. Run a benchmark first for accurate GPU width.</span>
-      </div>
+      <BenchmarkPrompt onRefresh={fetchData} />
 
       {loading && pciDevices.length === 0 ? (
         <div className="loader"><div className="spinner" /><p>Scanning PCIe hierarchy, NVMe drives, GPU-Z &amp; nvidia-smi…</p></div>

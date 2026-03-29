@@ -286,7 +286,60 @@ button:hover:not(:disabled) { background: rgba(59,130,246,0.25); border-color: r
 .history-device.throttled { background: rgba(239,68,68,0.1); color: #fca5a5; }
 .history-device.ok        { background: rgba(16,185,129,0.1); color: #6ee7b7; }
 
+/* ── Benchmark Bar ── */
+.benchmark-bar {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.875rem;
+  font-size: 0.85rem;
+  margin-bottom: 1.25rem;
+  background: rgba(139,92,246,0.07);
+  border: 1px solid rgba(139,92,246,0.18);
+  color: var(--text-secondary);
+}
+.benchmark-bar.running {
+  background: rgba(239,68,68,0.07);
+  border-color: rgba(239,68,68,0.2);
+  color: #fca5a5;
+}
+.benchmark-bar.notfound {
+  background: rgba(245,158,11,0.07);
+  border-color: rgba(245,158,11,0.2);
+  color: #fcd34d;
+}
+.bench-launch {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 1rem; border-radius: 0.5rem;
+  font-size: 0.8rem; font-weight: 700;
+  background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(59,130,246,0.2));
+  color: #c4b5fd; border: 1px solid rgba(139,92,246,0.35);
+  white-space: nowrap; cursor: pointer; font-family: inherit;
+  transition: background 0.2s, border-color 0.2s;
+}
+.bench-launch:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(139,92,246,0.4), rgba(59,130,246,0.3));
+  border-color: rgba(139,92,246,0.6);
+}
+.bench-launch:disabled { opacity: 0.5; cursor: not-allowed; }
+.bench-skip {
+  padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem;
+  background: rgba(255,255,255,0.05); color: inherit; border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.bench-skip:hover:not(:disabled) { background: rgba(255,255,255,0.1); border-color: transparent; }
+.bench-dl {
+  background: none; border: none; padding: 0; font-size: inherit;
+  color: #fbbf24; text-decoration: underline; cursor: pointer; font-family: inherit;
+}
+.bench-dl:hover { color: #fde68a; }
+@keyframes flicker {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.15); }
+}
+.flame-icon { animation: flicker 0.8s ease-in-out infinite; color: #f97316; }
+
 /* ── Motherboard Panel ── */
+
 .mb-panel {
   background: var(--card-bg);
   backdrop-filter: var(--blur);

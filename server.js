@@ -51,4 +51,8 @@ app.get('/api/system', (req, res) => runPS('get-system-info.ps1', res));
 // nvidia-smi: bifurcation-aware PCIe data for NVIDIA GPUs (no GPU-Z needed)
 app.get('/api/nvidia', (req, res) => runPS('get-nvidia-data.ps1', res));
 
+// Launch FurMark or HeavyLoad to stress GPU into full PCIe width
+app.post('/api/launch-benchmark', (req, res) => runPS('launch-benchmark.ps1', res));
+
+
 app.listen(port, () => console.log(`Backend API running at http://localhost:${port}`));
