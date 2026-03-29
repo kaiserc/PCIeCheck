@@ -48,4 +48,7 @@ app.get('/api/gpuz', (req, res) => runPS('get-gpuz-data.ps1', res));
 // System info: motherboard, CPU, NVMe drive names
 app.get('/api/system', (req, res) => runPS('get-system-info.ps1', res));
 
+// nvidia-smi: bifurcation-aware PCIe data for NVIDIA GPUs (no GPU-Z needed)
+app.get('/api/nvidia', (req, res) => runPS('get-nvidia-data.ps1', res));
+
 app.listen(port, () => console.log(`Backend API running at http://localhost:${port}`));

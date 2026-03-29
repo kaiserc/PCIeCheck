@@ -2,34 +2,40 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Cpu, HardDrive, RefreshCcw, AlertTriangle, Zap, CheckCircle,
-  Info, ShieldCheck, BookOpen, ExternalLink, Search, Layers
+  Info, ShieldCheck, BookOpen, ExternalLink, Search, Layers,
+  History, ChevronDown, ChevronUp, Clock, Trash2
 } from 'lucide-react';
 import './index.css';
 
 // Tauri-aware link opener: uses shell plugin inside .exe, window.open in browser
 async function openUrl(url: string) {
   try {
-    // Dynamically import Tauri shell plugin — only available inside packaged app
     const { open } = await import('@tauri-apps/plugin-shell');
     await open(url);
   } catch {
-    // Fallback for browser / dev mode
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────
 interface PciDevice {
   Name: string; Category: string; Class: string; Status: string;
   InstanceId: string;
   DeviceWidth: number; DeviceMaxWidth: number; DeviceSpeed: number; DeviceMaxSpeed: number;
   SlotWidth: number; SlotMaxWidth: number; SlotSpeed: number; SlotMaxSpeed: number;
   WidthThrottled: boolean; SpeedThrottled: boolean; IsThrottled: boolean; ParentId: string;
+  LaneSource?: 'CPU' | 'Chipset' | 'Unknown';
 }
 
 interface GpuZResult {
   GpuZRunning: boolean; Message?: string; CardName?: string;
   CurrentWidth?: number; MaxWidth?: number; CurrentSpeed?: number;
+  RawBusInterface?: string; IsThrottled?: boolean;
+}
+
+interface NvidiaSmiResult {
+  NvidiaSmiAvailable: boolean; Message?: string; CardName?: string;
+  CurrentWidth?: number; MaxWidth?: number; CurrentSpeed?: number; MaxSpeed?: number;
   RawBusInterface?: string; IsThrottled?: boolean;
 }
 
@@ -45,14 +51,43 @@ interface DisplayDevice {
   name: string; category: string;
   currentWidth: number; maxWidth: number; currentSpeed: number; maxSpeed: number;
   isThrottled: boolean; widthThrottled: boolean; speedThrottled: boolean;
-  source: 'gpuz' | 'pnp';
+  source: 'gpuz' | 'nvidia' | 'pnp';
   rawBusInterface?: string; instanceId: string;
   nvmeFriendlyName?: string; nvmeSizeGB?: number;
+  laneSource?: 'CPU' | 'Chipset' | 'Unknown';
+}
+
+interface HistorySnapshot {
+  timestamp: string;
+  label: string;
+  devices: DisplayDevice[];
+  throttledCount: number;
+}
+
+const HISTORY_KEY = 'pcie_sentinel_history';
+const MAX_HISTORY = 20;
+
+function loadHistory(): HistorySnapshot[] {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function saveSnapshot(devices: DisplayDevice[]) {
+  const history = loadHistory();
+  const snap: HistorySnapshot = {
+    timestamp: new Date().toISOString(),
+    label: new Date().toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }),
+    devices,
+    throttledCount: devices.filter(d => d.isThrottled).length,
+  };
+  const updated = [snap, ...history].slice(0, MAX_HISTORY);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  return updated;
 }
 
 const SPEED_LABELS: Record<number, string> = {
-  1: 'Gen 1  (2.5 GT/s)', 2: 'Gen 2  (5 GT/s)',
-  3: 'Gen 3  (8 GT/s)',   4: 'Gen 4  (16 GT/s)', 5: 'Gen 5  (32 GT/s)',
+  1: 'Gen 1 (2.5 GT/s)', 2: 'Gen 2 (5 GT/s)',
+  3: 'Gen 3 (8 GT/s)',   4: 'Gen 4 (16 GT/s)', 5: 'Gen 5 (32 GT/s)',
 };
 const speedLabel = (n: number) => SPEED_LABELS[n] ?? `Gen ${n}`;
 
@@ -70,11 +105,22 @@ function WidthBar({ current, max, throttled }: { current: number; max: number; t
   );
 }
 
-function SourceBadge({ source }: { source: 'gpuz' | 'pnp' }) {
-  return source === 'gpuz' ? (
-    <span className="source-badge gpuz"><ShieldCheck size={10} /> GPU-Z Verified</span>
-  ) : (
-    <span className="source-badge pnp"><Info size={10} /> Windows PnP</span>
+function SourceBadge({ source }: { source: 'gpuz' | 'nvidia' | 'pnp' }) {
+  if (source === 'gpuz')   return <span className="source-badge gpuz"><ShieldCheck size={10} /> GPU-Z Verified</span>;
+  if (source === 'nvidia') return <span className="source-badge nvidia"><Zap size={10} /> nvidia-smi</span>;
+  return <span className="source-badge pnp"><Info size={10} /> Windows PnP</span>;
+}
+
+function LaneSourceBadge({ lane }: { lane?: 'CPU' | 'Chipset' | 'Unknown' }) {
+  if (!lane || lane === 'Unknown') return null;
+  return (
+    <span className={`source-badge lane-${lane.toLowerCase()}`} title={
+      lane === 'CPU'
+        ? 'Direct CPU PCIe lanes — lowest latency, highest bandwidth ceiling'
+        : 'Chipset lanes via DMI — capped at Gen 3/4, slightly higher latency'
+    }>
+      {lane === 'CPU' ? '⚡' : '🔗'} {lane} Lanes
+    </span>
   );
 }
 
@@ -92,6 +138,7 @@ function DeviceCard({ device }: { device: DisplayDevice }) {
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
             <span className={`badge badge-${device.category.toLowerCase()}`}>{device.category}</span>
             <SourceBadge source={device.source} />
+            <LaneSourceBadge lane={device.laneSource} />
             {isNVMe && device.nvmeSizeGB && (
               <span className="source-badge pnp" style={{ opacity: 0.8 }}>
                 <Layers size={10} /> {device.nvmeSizeGB >= 1000 ? `${(device.nvmeSizeGB / 1000).toFixed(1)} TB` : `${device.nvmeSizeGB} GB`}
@@ -100,13 +147,16 @@ function DeviceCard({ device }: { device: DisplayDevice }) {
           </div>
           <h3 className="device-name">{displayName}</h3>
           {isNVMe && device.nvmeFriendlyName && (
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-              {device.name}
-            </p>
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{device.name}</p>
           )}
           {device.rawBusInterface && (
             <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.15rem', fontFamily: 'monospace' }}>
               {device.rawBusInterface}
+            </p>
+          )}
+          {device.laneSource === 'Chipset' && isNVMe && (
+            <p style={{ fontSize: '0.72rem', color: 'var(--accent-yellow)', marginTop: '0.2rem' }}>
+              ⚠ Chipset slot — max bandwidth capped at Gen 3/4 x4
             </p>
           )}
         </div>
@@ -146,7 +196,7 @@ function DeviceCard({ device }: { device: DisplayDevice }) {
               <strong>Bottleneck Detected</strong>
               <p style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>
                 Running at <strong>x{device.currentWidth}</strong> but capable of <strong>x{device.maxWidth}</strong>.{' '}
-                {isGPU  && <>Caused by <strong>PCIe bifurcation</strong> — an M.2 drive sharing CPU lanes with the GPU slot. Check your motherboard manual below.</>}
+                {isGPU  && <>Caused by <strong>PCIe bifurcation</strong> — an M.2 drive sharing CPU lanes with the GPU slot.</>}
                 {isNVMe && <>This drive is in a slot with fewer lanes than it supports.</>}
               </p>
             </div>
@@ -194,13 +244,70 @@ function GpuZNotice({ onDismiss }: { onDismiss: () => void }) {
     <div className="gpuz-notice">
       <Info size={18} style={{ flexShrink: 0 }} />
       <div>
-        <strong>GPU-Z not detected</strong>
+        <strong>No hardware-verified GPU source active</strong>
         <p style={{ marginTop: '0.2rem', fontSize: '0.85rem', opacity: 0.9 }}>
-          For accurate GPU bifurcation detection (x16 slot running at x8), open <strong>GPU-Z</strong> in
-          the background and click Refresh. GPU-Z reads PCIe lane width directly from hardware registers.
+          For accurate GPU bifurcation detection, open <strong>GPU-Z</strong> (AMD/NVIDIA/Intel)
+          or ensure <strong>NVIDIA drivers</strong> are installed (nvidia-smi is checked automatically).
+          Then click Refresh.
         </p>
       </div>
       <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: 'inherit', padding: '0', fontSize: '1rem', opacity: 0.6, cursor: 'pointer' }}>✕</button>
+    </div>
+  );
+}
+
+function HistoryPanel({ history, onClear }: { history: HistorySnapshot[]; onClear: () => void }) {
+  const [open, setOpen] = useState(false);
+  if (history.length === 0) return null;
+
+  return (
+    <div className="history-panel">
+      <button className="history-toggle" onClick={() => setOpen(o => !o)}>
+        <History size={14} />
+        <span>Scan History ({history.length})</span>
+        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+
+      {open && (
+        <div className="history-content">
+          <div className="history-header-row">
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+              Last {history.length} scan{history.length > 1 ? 's' : ''} — stored locally
+            </span>
+            <button className="history-clear" onClick={onClear} title="Clear history">
+              <Trash2 size={12} /> Clear
+            </button>
+          </div>
+          <div className="history-list">
+            {history.map((snap, i) => (
+              <div key={snap.timestamp} className={`history-row ${snap.throttledCount > 0 ? 'has-issues' : 'all-good'}`}>
+                <div className="history-meta">
+                  <Clock size={11} />
+                  <span className="history-label">{snap.label}</span>
+                  {i === 0 && <span className="badge-latest">latest</span>}
+                </div>
+                <div className="history-devices">
+                  {snap.devices.map(d => (
+                    <span
+                      key={d.instanceId}
+                      className={`history-device ${d.isThrottled ? 'throttled' : 'ok'}`}
+                      title={`${d.nvmeFriendlyName ?? d.name} — x${d.currentWidth}/${d.maxWidth}`}
+                    >
+                      {d.category === 'GPU' ? '🖥' : '💾'} x{d.currentWidth}
+                      {d.widthThrottled && ' ⚠'}
+                    </span>
+                  ))}
+                </div>
+                {snap.throttledCount > 0 && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--accent-red)', marginTop: '0.2rem' }}>
+                    {snap.throttledCount} bottleneck{snap.throttledCount > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -209,85 +316,111 @@ function GpuZNotice({ onDismiss }: { onDismiss: () => void }) {
 function App() {
   const [pciDevices, setPciDevices] = useState<DisplayDevice[]>([]);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
-  const [gpuZRunning, setGpuZRunning] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [gpuVerified, setGpuVerified] = useState<'gpuz' | 'nvidia' | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
   const [showGpuZNotice, setShowGpuZNotice] = useState(false);
+  const [history, setHistory]         = useState<HistorySnapshot[]>(() => loadHistory());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [pciRes, gpuzRes, sysRes] = await Promise.all([
+      const [pciRes, gpuzRes, sysRes, nvidiaRes] = await Promise.all([
         fetch('http://localhost:3001/api/pci'),
         fetch('http://localhost:3001/api/gpuz'),
         fetch('http://localhost:3001/api/system'),
+        fetch('http://localhost:3001/api/nvidia'),
       ]);
 
       if (!pciRes.ok) throw new Error('Backend unreachable. Run: npm run api');
 
-      const pciData: PciDevice[] = await pciRes.json().then(r => Array.isArray(r) ? r : [r]);
-      const gpuzRaw  = gpuzRes.ok  ? await gpuzRes.json()  : null;
-      const sysRaw   = sysRes.ok   ? await sysRes.json()   : null;
+      const pciData: PciDevice[]    = await pciRes.json().then(r => Array.isArray(r) ? r : [r]);
+      const gpuzRaw                 = gpuzRes.ok    ? await gpuzRes.json()   : null;
+      const sysRaw                  = sysRes.ok     ? await sysRes.json()    : null;
+      const nvidiaRaw               = nvidiaRes.ok  ? await nvidiaRes.json() : null;
 
       if (sysRaw) setSystemInfo(sysRaw as SystemInfo);
 
+      // ── GPU-Z entries ───────────────────────────────────────────────────
       const gpuzGpus: GpuZResult[] = gpuzRaw
-        ? (Array.isArray(gpuzRaw) ? gpuzRaw : [gpuzRaw]).filter(g => g.GpuZRunning)
+        ? (Array.isArray(gpuzRaw) ? gpuzRaw : [gpuzRaw]).filter((g: GpuZResult) => g.GpuZRunning)
         : [];
 
-      const gpuzUp = gpuzGpus.length > 0;
-      setGpuZRunning(gpuzUp);
-      setShowGpuZNotice(!gpuzUp);
+      // ── nvidia-smi entries ──────────────────────────────────────────────
+      const nvidiaGpus: NvidiaSmiResult[] = nvidiaRaw
+        ? (Array.isArray(nvidiaRaw) ? nvidiaRaw : [nvidiaRaw]).filter((g: NvidiaSmiResult) => g.NvidiaSmiAvailable)
+        : [];
 
-      // NVMe drive name lookup (positional — same order as PCI NVMe controllers)
+      const gpuzUp   = gpuzGpus.length > 0;
+      const nvidiaUp = nvidiaGpus.length > 0;
+      setGpuVerified(gpuzUp ? 'gpuz' : nvidiaUp ? 'nvidia' : null);
+      setShowGpuZNotice(!gpuzUp && !nvidiaUp);
+
+      // Speed→entry maps for matching against PnP GPU list
+      const gpuzBySpeed   = new Map<number, GpuZResult>();
+      const nvidiaBySpeed = new Map<number, NvidiaSmiResult>();
+      gpuzGpus.forEach(g   => { if (g.CurrentSpeed)  gpuzBySpeed.set(g.CurrentSpeed, g); });
+      nvidiaGpus.forEach(g => { if (g.CurrentSpeed)  nvidiaBySpeed.set(g.CurrentSpeed, g); });
+
       const nvmeNames: NvmeDrive[] = sysRaw?.NvmeDrives ?? [];
-
-      // Build GPU-Z speed→entry map for matching
-      const gpuzBySpeed = new Map<number, GpuZResult>();
-      gpuzGpus.forEach(g => { if (g.CurrentSpeed) gpuzBySpeed.set(g.CurrentSpeed, g); });
-
       const display: DisplayDevice[] = [];
 
-      // GPUs — PnP as base, GPU-Z overlay by Gen speed match
-      const pnpGpus = pciData.filter(d => d.Category === 'GPU');
-      pnpGpus.forEach(d => {
-        const gpuZ = gpuzBySpeed.get(d.DeviceSpeed) ?? gpuzBySpeed.get(d.SlotSpeed);
+      // ── GPUs: GPU-Z first, nvidia-smi fallback, then PnP ───────────────
+      pciData.filter(d => d.Category === 'GPU').forEach(d => {
+        const gpuZ   = gpuzBySpeed.get(d.DeviceSpeed)   ?? gpuzBySpeed.get(d.SlotSpeed);
+        const nvidia = nvidiaBySpeed.get(d.DeviceSpeed) ?? nvidiaBySpeed.get(d.SlotSpeed);
+
         if (gpuZ?.CurrentWidth) {
           display.push({
             name: d.Name, category: 'GPU',
             currentWidth: gpuZ.CurrentWidth,
-            maxWidth: gpuZ.MaxWidth ?? d.DeviceMaxWidth,
+            maxWidth:     gpuZ.MaxWidth ?? d.DeviceMaxWidth,
             currentSpeed: gpuZ.CurrentSpeed ?? d.SlotSpeed,
-            maxSpeed: gpuZ.MaxWidth ?? d.DeviceMaxWidth,
-            isThrottled: gpuZ.IsThrottled ?? false,
+            maxSpeed:     gpuZ.MaxWidth ?? d.DeviceMaxWidth,
+            isThrottled:  gpuZ.IsThrottled ?? false,
             widthThrottled: (gpuZ.CurrentWidth ?? 0) < (gpuZ.MaxWidth ?? 0),
             speedThrottled: false, source: 'gpuz',
-            rawBusInterface: gpuZ.RawBusInterface, instanceId: d.InstanceId,
+            rawBusInterface: gpuZ.RawBusInterface,
+            instanceId: d.InstanceId, laneSource: d.LaneSource,
           });
           gpuzBySpeed.delete(d.DeviceSpeed);
-          gpuzBySpeed.delete(d.SlotSpeed);
+        } else if (nvidia?.CurrentWidth) {
+          display.push({
+            name: d.Name, category: 'GPU',
+            currentWidth: nvidia.CurrentWidth,
+            maxWidth:     nvidia.MaxWidth ?? d.DeviceMaxWidth,
+            currentSpeed: nvidia.CurrentSpeed ?? d.SlotSpeed,
+            maxSpeed:     nvidia.MaxSpeed ?? d.SlotMaxSpeed,
+            isThrottled:  nvidia.IsThrottled ?? false,
+            widthThrottled: (nvidia.CurrentWidth ?? 0) < (nvidia.MaxWidth ?? 0),
+            speedThrottled: false, source: 'nvidia',
+            rawBusInterface: nvidia.RawBusInterface,
+            instanceId: d.InstanceId, laneSource: d.LaneSource,
+          });
+          nvidiaBySpeed.delete(d.DeviceSpeed);
         } else {
           display.push({
             name: d.Name, category: 'GPU',
             currentWidth: d.SlotWidth, maxWidth: d.SlotMaxWidth,
             currentSpeed: d.SlotSpeed, maxSpeed: d.SlotMaxSpeed,
             isThrottled: d.IsThrottled, widthThrottled: d.WidthThrottled,
-            speedThrottled: d.SpeedThrottled, source: 'pnp', instanceId: d.InstanceId,
+            speedThrottled: d.SpeedThrottled, source: 'pnp',
+            instanceId: d.InstanceId, laneSource: d.LaneSource,
           });
         }
       });
 
-      // NVMe drives — enrich with friendly names by index
-      const pnpNvme = pciData.filter(d => d.Category === 'NVMe');
-      pnpNvme.forEach((d, idx) => {
+      // ── NVMe drives: enrich with friendly names ─────────────────────────
+      pciData.filter(d => d.Category === 'NVMe').forEach((d, idx) => {
         const friendly = nvmeNames[idx];
         display.push({
           name: d.Name, category: 'NVMe',
           currentWidth: d.SlotWidth, maxWidth: d.SlotMaxWidth,
           currentSpeed: d.SlotSpeed, maxSpeed: d.SlotMaxSpeed,
           isThrottled: d.IsThrottled, widthThrottled: d.WidthThrottled,
-          speedThrottled: d.SpeedThrottled, source: 'pnp', instanceId: d.InstanceId,
+          speedThrottled: d.SpeedThrottled, source: 'pnp',
+          instanceId: d.InstanceId, laneSource: d.LaneSource,
           nvmeFriendlyName: friendly?.FriendlyName,
           nvmeSizeGB: friendly?.SizeGB,
         });
@@ -301,6 +434,11 @@ function App() {
       });
 
       setPciDevices(display);
+
+      // ── Save to history ─────────────────────────────────────────────────
+      if (display.length > 0) {
+        setHistory(saveSnapshot(display));
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -311,12 +449,17 @@ function App() {
   useEffect(() => { fetchData(); }, [fetchData]);
   const throttledCount = pciDevices.filter(d => d.isThrottled).length;
 
+  const clearHistory = () => {
+    localStorage.removeItem(HISTORY_KEY);
+    setHistory([]);
+  };
+
   return (
     <div className="container">
       <header className="header">
         <div>
           <h1>PCIe Lane Sentinel</h1>
-          <p>Bifurcation detection via GPU-Z + Windows PnP bridge analysis</p>
+          <p>Bifurcation detection via GPU-Z · nvidia-smi · Windows PnP</p>
         </div>
         <button onClick={fetchData} disabled={loading} id="refresh-btn">
           <RefreshCcw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
@@ -347,21 +490,24 @@ function App() {
 
       <div className="idle-notice">
         <Info size={13} />
-        <span>GPUs idle at x1–x4 to save power. Run a game or benchmark before scanning for accurate GPU width.</span>
+        <span>GPUs drop to x1–x4 at idle to save power. Run a benchmark first for accurate GPU width.</span>
       </div>
 
       {loading && pciDevices.length === 0 ? (
-        <div className="loader"><div className="spinner" /><p>Scanning PCIe hierarchy, NVMe drives &amp; GPU-Z…</p></div>
+        <div className="loader"><div className="spinner" /><p>Scanning PCIe hierarchy, NVMe drives, GPU-Z &amp; nvidia-smi…</p></div>
       ) : (
         <div className="grid">
           {pciDevices.map(device => <DeviceCard key={device.instanceId} device={device} />)}
         </div>
       )}
 
-      <footer style={{ marginTop: '3rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
-        {gpuZRunning === true  && <span style={{ color: 'var(--accent-green)'  }}>⬤ GPU-Z Active</span>}
-        {gpuZRunning === false && <span style={{ color: 'var(--accent-yellow)' }}>⬤ GPU-Z Inactive</span>}
-        <span style={{ marginLeft: '1rem' }}>PCIe Lane Sentinel • Windows PnP + GPU-Z SHM</span>
+      <HistoryPanel history={history} onClear={clearHistory} />
+
+      <footer style={{ marginTop: '2rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+        {gpuVerified === 'gpuz'   && <span style={{ color: 'var(--accent-green)'  }}>⬤ GPU-Z Active</span>}
+        {gpuVerified === 'nvidia' && <span style={{ color: 'var(--accent-green)'  }}>⬤ nvidia-smi Active</span>}
+        {gpuVerified === null     && <span style={{ color: 'var(--accent-yellow)' }}>⬤ No hardware GPU source</span>}
+        <span style={{ marginLeft: '1rem' }}>PCIe Lane Sentinel • GPU-Z SHM + nvidia-smi + Windows PnP</span>
       </footer>
     </div>
   );
