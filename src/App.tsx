@@ -6,11 +6,18 @@ import {
   History, ChevronDown, ChevronUp, Clock, Trash2, Flame,
   Sun, Moon, Copy, LayoutGrid
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import './index.css';
 
 async function openUrl(url: string) {
-  try { const { open } = await import('@tauri-apps/plugin-shell'); await open(url); }
-  catch { window.open(url, '_blank', 'noopener,noreferrer'); }
+  try { 
+    if (!url) { alert('Backend passed an empty URL!'); return; }
+    await invoke('open_url', { url }); 
+  }
+  catch (e) { 
+    alert(`Failed to open link via Tauri: ${e}\nURL: ${url}`);
+  }
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -328,8 +335,7 @@ function BenchmarkPrompt({ onRefresh }: { onRefresh: ()=>void }) {
   const launch = async () => {
     setStatus('launching');
     try {
-      const res  = await fetch('http://localhost:3001/api/launch-benchmark', { method:'POST' });
-      const data: BenchmarkResult = await res.json();
+      const data: BenchmarkResult = await invoke('launch_benchmark');
       if (data.Launched || data.AlreadyRunning) { setToolName(data.Tool??'Benchmark'); setStatus('countdown'); startCountdown(); }
       else { setDlUrls(data.DownloadUrls??null); setStatus('notfound'); }
     } catch { setStatus('notfound'); }
@@ -468,6 +474,15 @@ function App() {
   const [history, setHistory]         = useState<HistorySnapshot[]>(()=>loadHistory());
   const [lastScanLabel, setLastScanLabel]   = useState<string|null>(()=> { try { return JSON.parse(localStorage.getItem(LAST_SCAN_KEY)??'null')?.label??null; } catch { return null; } });
   const [theme, setTheme]             = useState<'dark'|'light'>(()=>(localStorage.getItem(THEME_KEY)??'dark') as 'dark'|'light');
+  const [scanLogs, setScanLogs]       = useState<string[]>(['Initializing scan...']);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<string>('scan-log', (event) => {
+      setScanLogs(prev => [...prev, event.payload]);
+    }).then(f => { unlisten = f; });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -476,18 +491,13 @@ function App() {
 
   const fetchData = useCallback(async () => {
     setScanState('scanning');
+    setScanLogs(['Warming up engines...']);
     setError(null);
     try {
-      const [pciRes, gpuzRes, sysRes, nvRes] = await Promise.all([
-        fetch('http://localhost:3001/api/pci'), fetch('http://localhost:3001/api/gpuz'),
-        fetch('http://localhost:3001/api/system'), fetch('http://localhost:3001/api/nvidia'),
-      ]);
-      if (!pciRes.ok) throw new Error('Backend unreachable — run: npm run api');
-
-      const pciData: PciDevice[] = await pciRes.json().then(r=>Array.isArray(r)?r:[r]);
-      const gpuzRaw = gpuzRes.ok  ? await gpuzRes.json()  : null;
-      const sysRaw  = sysRes.ok   ? await sysRes.json()   : null;
-      const nvRaw   = nvRes.ok    ? await nvRes.json()     : null;
+      const pciData: PciDevice[] = await invoke<PciDevice[]>('get_pci_data');
+      const gpuzRaw: any = await invoke('get_gpuz_data').catch(() => null);
+      const sysRaw: any  = await invoke('get_system_info').catch(() => null);
+      const nvRaw: any   = await invoke('get_nvidia_data').catch(() => null);
 
       if (sysRaw) setSystemInfo(sysRaw as SystemInfo);
 
@@ -530,7 +540,7 @@ function App() {
       localStorage.setItem(LAST_SCAN_KEY, JSON.stringify({label}));
       setScanState('done');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Unknown error'));
       setScanState('welcome');
     }
   }, []);
@@ -562,7 +572,21 @@ function App() {
       {scanState==='welcome' && <WelcomeScreen onScan={fetchData} lastScan={lastScanLabel}/>}
 
       {scanState==='scanning' && (
-        <div className="loader"><div className="spinner"/><p>Scanning PCIe hierarchy, NVMe drives, GPU-Z &amp; nvidia-smi…</p></div>
+        <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2rem', margin:'3rem 0'}}>
+          <div className="loader" style={{margin:0}}><div className="spinner"/><p>Scanning hardware...</p></div>
+          <div style={{
+            background:'#09090b', border:'1px solid var(--border-color)', borderRadius:'8px', 
+            padding:'1rem', width:'100%', maxWidth:'600px', textAlign:'left',
+            fontFamily:'monospace', fontSize:'0.85rem', color:'#34d399',
+            minHeight:'150px', maxHeight:'250px', overflowY:'auto',
+            boxShadow:'inset 0 0 10px rgba(0,0,0,0.5)'
+          }}>
+            {scanLogs.map((log, i) => (
+              <div key={i} style={{marginBottom:'0.3rem'}}><span style={{opacity:0.5}}>&gt;</span> {log}</div>
+            ))}
+            <div style={{display:'inline-block', width:'7px', height:'13px', background:'#34d399', verticalAlign:'middle', animation:'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite'}} />
+          </div>
+        </div>
       )}
 
       {scanState==='done' && (

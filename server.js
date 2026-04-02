@@ -1,7 +1,7 @@
 
 import express from 'express';
 import cors from 'cors';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,8 +15,7 @@ app.use(express.json());
 
 function runPS(scriptFile, res) {
     const psPath = path.join(__dirname, scriptFile);
-    const cmd = `powershell -ExecutionPolicy Bypass -File "${psPath}"`;
-    exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+    execFile('powershell', ['-ExecutionPolicy', 'Bypass', '-File', psPath], { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
         if (error) return res.status(500).json({ error: 'Script failed', details: error.message });
         try {
             // Find the FIRST JSON opener (whichever comes first: { or [)

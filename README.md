@@ -50,12 +50,11 @@ PCIe Speed: Gen 5 (32 GT/s)
 ### To run the pre-built `.exe`
 - Windows 10/11 x64
 - [GPU-Z](https://www.techpowerup.com/gpuz/) running in the background (for accurate GPU bifurcation detection)
-- The Node.js backend (`npm run api`) running alongside the app (see note below)
 
-> **Note on architecture:** The `.exe` is a Tauri-wrapped frontend. It still depends on the Node.js/PowerShell backend for hardware data. See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and the roadmap for making it fully self-contained.
+> **Note on architecture:** The application relies on native Tauri Rust hooks and powershell scripts to probe hardware securely. No external backend is required! See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ### To build from source
-- [Node.js](https://nodejs.org/) ≥ 18
+- [Node.js](https://nodejs.org/) ≥ 18 (for compiling the React frontend via Vite)
 - [Rust](https://rustup.rs/) (stable toolchain)
 - Windows 10/11 x64
 
@@ -68,22 +67,22 @@ PCIe Speed: Gen 5 (32 GT/s)
 ```powershell
 git clone https://github.com/kaiserc/PCIeCheck.git
 cd PCIeCheck
-npm install
-npm run start
+pnpm install
+pnpm run tauri:dev
 ```
 
-Then open `http://localhost:5173` in your browser. Make sure GPU-Z is open in the background for bifurcation detection.
+This will launch the live-reloading Tauri desktop application. Make sure GPU-Z is open in the background for bifurcation detection.
 
 ### Option B — Build the Windows `.exe`
 
 ```powershell
-npm install
-npm run tauri:build
+pnpm install
+pnpm run tauri:build
 ```
 
 The installer will be at:
 ```
-src-tauri\target\release\bundle\nsis\PCIe Lane Sentinel_0.1.0_x64-setup.exe
+src-tauri\target\release\bundle\nsis\PCIe Lane Sentinel_0.2.0_x64-setup.exe
 ```
 
 ---
@@ -108,14 +107,14 @@ PCIeCheck/
 ├── src/                    # React + TypeScript frontend
 │   ├── App.tsx             # Main dashboard, data fusion logic
 │   └── index.css           # Dark-mode UI styles
-├── server.js               # Express API bridge (Node.js)
-├── get-pci-data.ps1        # PowerShell: Windows PnP bridge scan
-├── get-gpuz-data.ps1       # PowerShell: GPU-Z shared memory reader (C# inline)
-├── get-system-info.ps1     # PowerShell: Motherboard, CPU, NVMe names
-├── src-tauri/              # Tauri (Rust) desktop wrapper
-│   ├── src/lib.rs          # Tauri app entry point
-│   ├── tauri.conf.json     # App config, window size, bundle targets
-│   └── capabilities/       # Tauri permission grants (shell:allow-open etc.)
+├── scripts/                # Diagnostic scripts payload
+│   ├── get-pci-data.ps1    # PowerShell: Windows PnP bridge scan
+│   ├── get-gpuz-data.ps1   # PowerShell: GPU-Z shared memory reader (C# inline)
+│   └── get-system-info.ps1 # PowerShell: Motherboard, CPU, NVMe names
+├── src-tauri/              # Tauri (Rust) desktop wrapper and backend controllers
+│   ├── src/lib.rs          # Tauri app entry point + routers
+│   ├── src/commands.rs     # Native Async Rust scripts runner
+│   └── tauri.conf.json     # App config, window size, bundle targets
 └── docs/
     ├── ARCHITECTURE.md     # System design and data flow
     └── HOW-IT-WORKS.md     # Technical deep-dive
@@ -127,23 +126,21 @@ PCIeCheck/
 
 | Command | Description |
 |---|---|
-| `npm run start` | Run frontend + API backend concurrently (dev mode) |
-| `npm run dev` | Frontend only (Vite HMR) |
-| `npm run api` | Backend API only (Node.js on port 3001) |
-| `npm run tauri:build` | Build production `.exe` + `.msi` installer |
-| `npm run tauri:dev` | Tauri dev window (live-reload) |
+| `pnpm run dev` | Frontend only (Vite HMR) |
+| `pnpm run tauri:build` | Build production `.exe` + `.msi` installer |
+| `pnpm run tauri:dev` | Tauri dev window (live-reload) |
 
 ---
 
-## API Endpoints
+## Tauri Commands (IPC)
 
-The Node.js backend exposes three endpoints on `http://localhost:3001`:
+The Rust backend securely exposes these functions to the React frontend component:
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/pci` | All PCIe devices from Windows PnP (GPUs, NVMe, bridges) |
-| `GET /api/gpuz` | GPU PCIe data from GPU-Z shared memory (bifurcation-aware) |
-| `GET /api/system` | Motherboard make/model, CPU name, NVMe friendly names |
+| `get_pci_data` | All PCIe devices from Windows PnP (GPUs, NVMe, bridges) |
+| `get_gpuz_data` | GPU PCIe data from GPU-Z shared memory (bifurcation-aware) |
+| `get_system_info` | Motherboard make/model, CPU name, NVMe friendly names |
 
 ---
 

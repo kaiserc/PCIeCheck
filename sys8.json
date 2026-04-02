@@ -1,0 +1,22 @@
+﻿{
+    "Motherboard":  {
+                        "Make":  "Micro-Star International Co., Ltd.",
+                        "Model":  "MAG X870E TOMAHAWK WIFI (MS-7E59)",
+                        "SearchUrl":  "https://www.google.com/search?q=Micro-Star%20International%20Co.%2C%20Ltd.%20MAG%20X870E%20TOMAHAWK%20WIFI%20(MS-7E59)%20PCIe%20M.2%20slots%20manual",
+                        "ManualUrl":  "https://www.google.com/search?q=Micro-Star%20International%20Co.%2C%20Ltd.%20MAG%20X870E%20TOMAHAWK%20WIFI%20(MS-7E59)%20manual%20filetype%3Apdf",
+                        "MfgUrl":  "https://www.msi.com/support"
+                    },
+    "CPU":  "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "NvmeDrives":  [
+                       {
+                           "FriendlyName":  "Netac NVMe SSD 4TB",
+                           "SizeGB":  3726,
+                           "MediaType":  "SSD"
+                       },
+                       {
+                           "FriendlyName":  "Netac NVMe SSD 2TB",
+                           "SizeGB":  1863,
+                           "MediaType":  "SSD"
+                       }
+                   ]
+}
