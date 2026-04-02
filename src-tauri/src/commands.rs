@@ -3,6 +3,9 @@ use std::process::Command;
 use std::path::PathBuf;
 use std::os::windows::process::CommandExt;
 use tauri::Emitter;
+use nvml_wrapper::Nvml;
+use libloading::{Library, Symbol};
+use std::os::raw::{c_int, c_void};
 
 // ── Data Structures ────────────────────────────────────────────────────────
 
@@ -40,6 +43,32 @@ pub struct GpuZResult {
     pub current_speed: Option<i32>,
     pub raw_bus_interface: Option<String>,
     pub is_throttled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct NativeGpuResult {
+    pub success: bool,
+    pub card_name: Option<String>,
+    pub current_width: Option<u32>,
+    pub max_width: Option<u32>,
+    pub current_speed: Option<u32>,
+    pub is_throttled: Option<bool>,
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct ADLPMActivity {
+    pub size: c_int,
+    pub engine_clock: c_int,
+    pub memory_clock: c_int,
+    pub vddc: c_int,
+    pub activity_percent: c_int,
+    pub current_performance_level: c_int,
+    pub current_bus_speed: c_int,
+    pub current_bus_lanes: c_int,
+    pub maximum_bus_lanes: c_int,
+    pub reserved: c_int,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +222,114 @@ pub async fn get_system_info(app: tauri::AppHandle) -> Result<SystemInfo, String
     }
 
     parse_json(&json)
+}
+
+#[tauri::command]
+pub async fn get_native_nvidia_data(app: tauri::AppHandle) -> Result<Vec<NativeGpuResult>, String> {
+    app.emit("scan-log", "Executing native NVIDIA NVML probe...").ok();
+    
+    let nvml = match Nvml::init() {
+        Ok(n) => n,
+        Err(e) => return Err(format!("NVML Init failed: {}", e)),
+    };
+    
+    let device_count = nvml.device_count().map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+    
+    for i in 0..device_count {
+        if let Ok(device) = nvml.device_by_index(i) {
+            let name = device.name().ok();
+            let current_width = device.current_pcie_link_width().ok();
+            let max_width = device.max_pcie_link_width().unwrap_or(16);
+            let current_speed = device.current_pcie_link_gen().ok();
+            
+            let is_throttled = match current_width {
+                Some(c) => Some(c < max_width),
+                _ => None,
+            };
+            
+            results.push(NativeGpuResult {
+                success: true,
+                card_name: name,
+                current_width,
+                max_width: Some(max_width),
+                current_speed,
+                is_throttled,
+            });
+        }
+    }
+    
+    if results.is_empty() {
+        return Err("No NVIDIA devices accessible".into());
+    }
+    
+    Ok(results)
+}
+
+extern "stdcall" fn adl_malloc(size: c_int) -> *mut c_void {
+    let mut vec: Vec<u8> = Vec::with_capacity(size as usize);
+    let ptr = vec.as_mut_ptr();
+    std::mem::forget(vec);
+    ptr as *mut c_void
+}
+
+#[tauri::command]
+pub async fn get_native_amd_data(app: tauri::AppHandle) -> Result<Vec<NativeGpuResult>, String> {
+    app.emit("scan-log", "Executing native AMD ADL probe...").ok();
+    
+    unsafe {
+        let lib = Library::new("atiadlxx.dll").map_err(|e| format!("AMD Library not found: {}", e))?;
+        
+        type AdlControlCreate = extern "stdcall" fn(extern "stdcall" fn(c_int) -> *mut c_void, c_int) -> c_int;
+        let adl_create: Symbol<AdlControlCreate> = lib.get(b"ADL_Main_Control_Create\0").map_err(|e| e.to_string())?;
+        
+        if adl_create(adl_malloc, 1) != 0 {
+            return Err("Failed to initialize AMD ADL".into());
+        }
+
+        type AdlGetNumAdapters = extern "stdcall" fn(*mut c_int) -> c_int;
+        let get_adapters: Symbol<AdlGetNumAdapters> = lib.get(b"ADL_Adapter_NumberOfAdapters_Get\0").map_err(|e| e.to_string())?;
+        
+        let mut num_adapters: c_int = 0;
+        if get_adapters(&mut num_adapters) != 0 {
+            return Err("Failed to get AMD adapter count".into());
+        }
+
+        type AdlPmActivityGet = extern "stdcall" fn(c_int, *mut ADLPMActivity) -> c_int;
+        let get_pm: Result<Symbol<AdlPmActivityGet>, _> = lib.get(b"ADL_Overdrive5_PMActivity_Get\0");
+        
+        let mut results = Vec::new();
+        
+        if let Ok(getActivity) = get_pm {
+            for i in 0..num_adapters {
+                let mut activity = ADLPMActivity::default();
+                activity.size = std::mem::size_of::<ADLPMActivity>() as c_int;
+                
+                if getActivity(i, &mut activity) == 0 {
+                    let cur = activity.current_bus_lanes as u32;
+                    let mx = activity.maximum_bus_lanes as u32;
+                    let speed = activity.current_bus_speed as u32;
+                    
+                    if cur > 0 {
+                        results.push(NativeGpuResult {
+                            success: true,
+                            card_name: Some(format!("AMD Radeon Adapter {}", i)),
+                            current_width: Some(cur),
+                            max_width: Some(mx),
+                            current_speed: Some(speed),
+                            is_throttled: Some(cur < mx),
+                        });
+                    }
+                }
+            }
+        }
+        
+        if results.is_empty() {
+             return Err("No active AMD ADL statistics readable natively.".into());
+        }
+
+        Ok(results)
+    }
 }
 
 #[tauri::command]

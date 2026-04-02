@@ -38,6 +38,11 @@ interface NvidiaSmiResult {
   CurrentWidth?: number; MaxWidth?: number; CurrentSpeed?: number; MaxSpeed?: number;
   RawBusInterface?: string; IsThrottled?: boolean;
 }
+interface NativeGpuResult {
+  Success: boolean; CardName?: string;
+  CurrentWidth?: number; MaxWidth?: number; CurrentSpeed?: number;
+  IsThrottled?: boolean;
+}
 interface NvmeDrive { FriendlyName: string; SizeGB: number; MediaType: string; }
 interface SystemInfo {
   Motherboard: { Make: string; Model: string; SearchUrl: string; ManualUrl: string; MfgUrl: string; };
@@ -47,7 +52,7 @@ interface DisplayDevice {
   name: string; category: string;
   currentWidth: number; maxWidth: number; currentSpeed: number; maxSpeed: number;
   isThrottled: boolean; widthThrottled: boolean; speedThrottled: boolean;
-  source: 'gpuz' | 'nvidia' | 'pnp';
+  source: 'gpuz' | 'nvidia' | 'pnp' | 'nvml' | 'adl';
   rawBusInterface?: string; instanceId: string;
   nvmeFriendlyName?: string; nvmeSizeGB?: number;
   laneSource?: 'CPU' | 'Chipset' | 'Unknown';
@@ -194,9 +199,11 @@ function WidthBar({ current, max, throttled }: { current: number; max: number; t
   );
 }
 
-function SourceBadge({ source }: { source: 'gpuz'|'nvidia'|'pnp' }) {
+function SourceBadge({ source }: { source: 'gpuz'|'nvidia'|'pnp'|'nvml'|'adl' }) {
   if (source==='gpuz')   return <span className="source-badge gpuz"><ShieldCheck size={10}/> GPU-Z Verified</span>;
   if (source==='nvidia') return <span className="source-badge nvidia"><Zap size={10}/> nvidia-smi</span>;
+  if (source==='nvml') return <span className="source-badge nvidia"><Cpu size={10}/> NVML Native</span>;
+  if (source==='adl') return <span className="source-badge" style={{color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.1)'}}><Cpu size={10}/> ADL Native</span>;
   return <span className="source-badge pnp"><Info size={10}/> Windows PnP</span>;
 }
 
@@ -468,7 +475,7 @@ function App() {
   const [scanState, setScanState]     = useState<'welcome'|'scanning'|'done'>('welcome');
   const [pciDevices, setPciDevices]   = useState<DisplayDevice[]>([]);
   const [systemInfo, setSystemInfo]   = useState<SystemInfo|null>(null);
-  const [gpuVerified, setGpuVerified] = useState<'gpuz'|'nvidia'|null>(null);
+  const [gpuVerified, setGpuVerified] = useState<'gpuz'|'nvidia'|'nvml'|'adl'|null>(null);
   const [error, setError]             = useState<string|null>(null);
   const [showGpuZNotice, setShowGpuZNotice] = useState(false);
   const [history, setHistory]         = useState<HistorySnapshot[]>(()=>loadHistory());
@@ -498,24 +505,41 @@ function App() {
       const gpuzRaw: any = await invoke('get_gpuz_data').catch(() => null);
       const sysRaw: any  = await invoke('get_system_info').catch(() => null);
       const nvRaw: any   = await invoke('get_nvidia_data').catch(() => null);
+      const nvmlRaw: any = await invoke('get_native_nvidia_data').catch(() => null);
+      const adlRaw: any  = await invoke('get_native_amd_data').catch(() => null);
 
       if (sysRaw) setSystemInfo(sysRaw as SystemInfo);
 
       const gpuzGpus: GpuZResult[]    = gpuzRaw ? (Array.isArray(gpuzRaw)?gpuzRaw:[gpuzRaw]).filter((g:GpuZResult)=>g.GpuZRunning) : [];
       const nvidiaGpus: NvidiaSmiResult[] = nvRaw ? (Array.isArray(nvRaw)?nvRaw:[nvRaw]).filter((g:NvidiaSmiResult)=>g.NvidiaSmiAvailable) : [];
-      const gpuzUp=gpuzGpus.length>0, nvUp=nvidiaGpus.length>0;
-      setGpuVerified(gpuzUp?'gpuz':nvUp?'nvidia':null);
-      setShowGpuZNotice(!gpuzUp && !nvUp);
+      const nvmlGpus: NativeGpuResult[] = nvmlRaw || [];
+      const adlGpus: NativeGpuResult[]  = adlRaw || [];
+      
+      const gpuzUp=gpuzGpus.length>0, nvUp=nvidiaGpus.length>0, nvmlUp=nvmlGpus.length>0, adlUp=adlGpus.length>0;
+      setGpuVerified(nvmlUp?'nvml':adlUp?'adl':gpuzUp?'gpuz':nvUp?'nvidia':null);
+      setShowGpuZNotice(!nvmlUp && !adlUp && !gpuzUp && !nvUp);
 
       const gpuzBySpeed=new Map<number,GpuZResult>(); gpuzGpus.forEach(g=>{if(g.CurrentSpeed)gpuzBySpeed.set(g.CurrentSpeed,g);});
       const nvBySpeed=new Map<number,NvidiaSmiResult>(); nvidiaGpus.forEach(g=>{if(g.CurrentSpeed)nvBySpeed.set(g.CurrentSpeed,g);});
+      const nvmlBySpeed=new Map<number,NativeGpuResult>(); nvmlGpus.forEach(g=>{if(g.CurrentSpeed)nvmlBySpeed.set(g.CurrentSpeed,g);});
+      const adlBySpeed=new Map<number,NativeGpuResult>(); adlGpus.forEach(g=>{if(g.CurrentSpeed)adlBySpeed.set(g.CurrentSpeed,g);});
+      
       const nvmeNames: NvmeDrive[] = sysRaw?.NvmeDrives??[];
       const display: DisplayDevice[] = [];
 
       pciData.filter(d=>d.Category==='GPU').forEach(d=>{
+        const nativeN = nvmlBySpeed.get(d.DeviceSpeed)??nvmlBySpeed.get(d.SlotSpeed);
+        const nativeA = adlBySpeed.get(d.DeviceSpeed)??adlBySpeed.get(d.SlotSpeed);
         const gz=gpuzBySpeed.get(d.DeviceSpeed)??gpuzBySpeed.get(d.SlotSpeed);
         const nv=nvBySpeed.get(d.DeviceSpeed)??nvBySpeed.get(d.SlotSpeed);
-        if (gz?.CurrentWidth) {
+        
+        if (nativeN?.CurrentWidth) {
+           display.push({ name:d.Name, category:'GPU', currentWidth:nativeN.CurrentWidth, maxWidth:nativeN.MaxWidth??d.DeviceMaxWidth, currentSpeed:nativeN.CurrentSpeed??d.SlotSpeed, maxSpeed:nativeN.MaxWidth??d.DeviceMaxWidth, isThrottled:nativeN.IsThrottled??false, widthThrottled:(nativeN.CurrentWidth??0)<(nativeN.MaxWidth??0), speedThrottled:false, source:'nvml', instanceId:d.InstanceId, laneSource:d.LaneSource });
+           nvmlBySpeed.delete(d.DeviceSpeed);
+        } else if (nativeA?.CurrentWidth) {
+           display.push({ name:d.Name, category:'GPU', currentWidth:nativeA.CurrentWidth, maxWidth:nativeA.MaxWidth??d.DeviceMaxWidth, currentSpeed:nativeA.CurrentSpeed??d.SlotSpeed, maxSpeed:nativeA.MaxWidth??d.DeviceMaxWidth, isThrottled:nativeA.IsThrottled??false, widthThrottled:(nativeA.CurrentWidth??0)<(nativeA.MaxWidth??0), speedThrottled:false, source:'adl', instanceId:d.InstanceId, laneSource:d.LaneSource });
+           adlBySpeed.delete(d.DeviceSpeed);
+        } else if (gz?.CurrentWidth) {
           display.push({ name:d.Name, category:'GPU', currentWidth:gz.CurrentWidth, maxWidth:gz.MaxWidth??d.DeviceMaxWidth, currentSpeed:gz.CurrentSpeed??d.SlotSpeed, maxSpeed:gz.MaxWidth??d.DeviceMaxWidth, isThrottled:gz.IsThrottled??false, widthThrottled:(gz.CurrentWidth??0)<(gz.MaxWidth??0), speedThrottled:false, source:'gpuz', rawBusInterface:gz.RawBusInterface, instanceId:d.InstanceId, laneSource:d.LaneSource });
           gpuzBySpeed.delete(d.DeviceSpeed);
         } else if (nv?.CurrentWidth) {

@@ -9,6 +9,8 @@ pub fn run() {
       commands::get_gpuz_data,
       commands::get_system_info,
       commands::get_nvidia_data,
+      commands::get_native_nvidia_data,
+      commands::get_native_amd_data,
       commands::launch_benchmark,
       commands::open_url,
     ])
